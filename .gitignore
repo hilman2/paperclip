@@ -82,3 +82,6 @@ test-results/
 
 # Retained local lifecycle behavior measurements
 .lifecycle-baseline/
+server/skills/
+packages/adapters/claude-local/skills/
+packages/adapters/codex-local/skills/

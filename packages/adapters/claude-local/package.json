@@ -50,7 +50,10 @@
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
     "probe:quota": "pnpm exec tsx src/cli/quota-probe.ts --json",
-    "probe:quota:raw": "pnpm exec tsx src/cli/quota-probe.ts --json --raw-cli"
+    "probe:quota:raw": "pnpm exec tsx src/cli/quota-probe.ts --json --raw-cli",
+    "prepare:skills": "rm -rf skills && cp -r ../../../skills skills",
+    "prepack": "pnpm run prepare:skills",
+    "postpack": "rm -rf skills"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.73.0",

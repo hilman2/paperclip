@@ -7,7 +7,20 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
-export function materializePublishManifest(pkg) {
+// Workspace package versions can differ (e.g. plugin-sdk is versioned on its
+// own), so `workspace:` ranges resolve to the dependency's version, not ours.
+function readWorkspaceVersions() {
+  const manifestPath = resolve(repoRoot, "scripts", "release-package-manifest.json");
+  if (!existsSync(manifestPath)) return new Map();
+  const entries = JSON.parse(readFileSync(manifestPath, "utf8"));
+  return new Map(
+    entries
+      .filter((entry) => existsSync(resolve(repoRoot, entry.dir, "package.json")))
+      .map((entry) => [entry.name, JSON.parse(readFileSync(resolve(repoRoot, entry.dir, "package.json"), "utf8")).version]),
+  );
+}
+
+export function materializePublishManifest(pkg, workspaceVersions = readWorkspaceVersions()) {
   const publishConfig = pkg.publishConfig ?? {};
   const publishManifest = { ...pkg };
 
@@ -22,7 +35,7 @@ export function materializePublishManifest(pkg) {
         if (typeof specifier !== "string" || !specifier.startsWith("workspace:")) return [name, specifier];
         const range = specifier.slice("workspace:".length);
         const prefix = range === "^" || range === "~" ? range : "";
-        return [name, `${prefix}${pkg.version}`];
+        return [name, `${prefix}${workspaceVersions.get(name) ?? pkg.version}`];
       }),
     );
   }
@@ -157,6 +170,10 @@ export function prepareBundledPackage(sourceDir, destinationDir, { sourceRoot = 
 
   const deployedPackagePath = resolve(destinationDir, "package.json");
   const publishManifest = materializePublishManifest(sourcePackage);
+  // The staged directory is already the packed form; its pack hooks reference
+  // workspace paths and must not run again when it is `npm pack`ed without
+  // --ignore-scripts (as `paperclipai install --ref` does).
+  for (const hook of ["prepack", "postpack", "prepare"]) delete publishManifest.scripts?.[hook];
   const installManifest = createBundledInstallManifest(publishManifest, bundledDependencies);
   writeFileSync(deployedPackagePath, `${JSON.stringify(installManifest, null, 2)}\n`);
 
@@ -218,5 +235,19 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.error("Usage: prepare-bundled-package.mjs <source-dir> <destination-dir>");
     process.exit(1);
   }
+  prepareMissingPackageFiles(resolve(sourceDir));
   prepareBundledPackage(resolve(sourceDir), resolve(destinationDir));
+}
+
+// This script stands in for `npm pack`, so pack-time artifacts (e.g. the
+// server's ui-dist, normally built by its prepack hook) may not exist yet when
+// it runs outside release.sh, such as `paperclipai install --ref`. Build any
+// missing `files` entry that has a matching `prepare:<entry>` script.
+function prepareMissingPackageFiles(sourceDir) {
+  const sourcePackage = JSON.parse(readFileSync(resolve(sourceDir, "package.json"), "utf8"));
+  for (const entry of sourcePackage.files ?? []) {
+    const script = `prepare:${entry}`;
+    if (existsSync(resolve(sourceDir, entry)) || !sourcePackage.scripts?.[script]) continue;
+    execFileSync("pnpm", ["run", script], { cwd: sourceDir, stdio: "inherit" });
+  }
 }
