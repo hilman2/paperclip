@@ -2283,6 +2283,17 @@ export function resolveJoinRequestAgentManagerId(
   return (rootCeo ?? ceoCandidates[0] ?? null)?.id ?? null;
 }
 
+// A company without a CEO would otherwise deadlock: invited agents can only be
+// approved under a CEO, but invites never create one. So the first agent
+// approved into a CEO-less company becomes its root CEO.
+export function resolveJoinRequestAgentPlacement(
+  candidates: JoinRequestManagerCandidate[]
+): { role: "ceo" | "general"; title: string | null; reportsTo: string | null } {
+  const managerId = resolveJoinRequestAgentManagerId(candidates);
+  if (!managerId) return { role: "ceo", title: "CEO", reportsTo: null };
+  return { role: "general", title: null, reportsTo: managerId };
+}
+
 function isInviteTokenHashCollisionError(error: unknown) {
   const candidates = [
     error,
@@ -4252,12 +4263,7 @@ export function accessRoutes(
       } else {
         assertLegacyAgentInviteAdapterType(existing.adapterType);
         const existingAgents = await agents.list(companyId);
-        const managerId = resolveJoinRequestAgentManagerId(existingAgents);
-        if (!managerId) {
-          throw conflict(
-            "Join request cannot be approved because this company has no active CEO"
-          );
-        }
+        const placement = resolveJoinRequestAgentPlacement(existingAgents);
 
         const agentName = deduplicateAgentName(
           existing.agentName ?? "New Agent",
@@ -4270,10 +4276,10 @@ export function accessRoutes(
 
         const created = await agents.create(companyId, {
           name: agentName,
-          role: "general",
-          title: null,
+          role: placement.role,
+          title: placement.title,
           status: "idle",
-          reportsTo: managerId,
+          reportsTo: placement.reportsTo,
           capabilities: existing.capabilities ?? null,
           adapterType: existing.adapterType ?? "process",
           adapterConfig:
